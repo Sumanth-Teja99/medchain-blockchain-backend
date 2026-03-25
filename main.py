@@ -98,23 +98,6 @@ class RecordRequest(BaseModel):
     data: str
 
 # -------------------------------
-# AUTO FAKE DATA (IMPORTANT)
-# -------------------------------
-@app.on_event("startup")
-def create_fake_users():
-    db = SessionLocal()
-
-    if not db.query(User).first():
-        users = [
-            User(username="patient1", password=hash_password("1234"), role="Patient"),
-            User(username="doctor1", password=hash_password("1234"), role="Doctor"),
-        ]
-        db.add_all(users)
-        db.commit()
-
-    db.close()
-
-# -------------------------------
 # ROUTES
 # -------------------------------
 
