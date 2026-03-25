@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from database import engine, Base, SessionLocal
 from models import User, MedicalRecord, RecordAccess, AuditLog, EmergencyAccess
 from passlib.context import CryptContext
-from jose import jwt, JWTError
+from jose import jwt
 from cryptography.fernet import Fernet
 from pydantic import BaseModel
 import hashlib
@@ -98,6 +98,27 @@ class RecordRequest(BaseModel):
     data: str
 
 # -------------------------------
+# 🔥 FIXED FAKE USERS (IMPORTANT)
+# -------------------------------
+@app.on_event("startup")
+def reset_users():
+    db = SessionLocal()
+
+    # DELETE ALL OLD USERS
+    db.query(User).delete()
+    db.commit()
+
+    # CREATE FRESH USERS
+    users = [
+        User(username="patient1", password=hash_password("1234"), role="Patient"),
+        User(username="doctor1", password=hash_password("1234"), role="Doctor"),
+    ]
+
+    db.add_all(users)
+    db.commit()
+    db.close()
+
+# -------------------------------
 # ROUTES
 # -------------------------------
 
@@ -144,7 +165,7 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
     }
 
 # -------------------------------
-# ADD RECORD (PATIENT ONLY)
+# ADD RECORD
 # -------------------------------
 @app.post("/add_record")
 def add_record(req: RecordRequest, user=Depends(get_current_user), db: Session = Depends(get_db)):
@@ -183,15 +204,13 @@ def get_records(user=Depends(get_current_user), db: Session = Depends(get_db)):
 
     if user.role == "Patient":
         records = db.query(MedicalRecord).filter(MedicalRecord.patient_id == user.id).all()
-
-    else:  # Doctor
+    else:
         allowed = db.query(RecordAccess).filter(
             RecordAccess.doctor_id == user.id,
             RecordAccess.access_granted == "yes"
         ).all()
 
         record_ids = [a.record_id for a in allowed]
-
         records = db.query(MedicalRecord).filter(MedicalRecord.id.in_(record_ids)).all()
 
     result = []
@@ -203,62 +222,3 @@ def get_records(user=Depends(get_current_user), db: Session = Depends(get_db)):
         })
 
     return result
-
-# -------------------------------
-# GRANT ACCESS
-# -------------------------------
-@app.post("/grant_access")
-def grant_access(record_id: int, doctor_id: int, user=Depends(get_current_user), db: Session = Depends(get_db)):
-
-    if user.role != "Patient":
-        raise HTTPException(403, "Only patient can grant access")
-
-    access = RecordAccess(
-        record_id=record_id,
-        doctor_id=doctor_id,
-        access_granted="yes"
-    )
-
-    db.add(access)
-    db.commit()
-
-    return {"msg": "Access granted"}
-
-# -------------------------------
-# EMERGENCY ACCESS
-# -------------------------------
-@app.post("/emergency_access")
-def emergency_access(record_id: int, user=Depends(get_current_user), db: Session = Depends(get_db)):
-
-    if user.role != "Doctor":
-        raise HTTPException(403, "Only doctor can use emergency")
-
-    start = datetime.now()
-    end = start + timedelta(minutes=30)
-
-    access = EmergencyAccess(
-        record_id=record_id,
-        doctor_id=user.id,
-        access_granted="yes",
-        start_time=str(start),
-        end_time=str(end)
-    )
-
-    db.add(access)
-    db.commit()
-
-    return {"msg": "Emergency access granted for 30 min"}
-
-# -------------------------------
-# VERIFY
-# -------------------------------
-@app.get("/verify_record")
-def verify(record_id: int, data: str):
-    new_hash = hash_record(data)
-    old_hash = blockchain_storage.get(record_id)
-
-    return {
-        "valid": new_hash == old_hash,
-        "stored": old_hash,
-        "computed": new_hash
-    }
