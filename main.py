@@ -104,11 +104,9 @@ class RecordRequest(BaseModel):
 def reset_users():
     db = SessionLocal()
 
-    # DELETE ALL OLD USERS
     db.query(User).delete()
     db.commit()
 
-    # CREATE FRESH USERS
     users = [
         User(username="patient1", password=hash_password("1234"), role="Patient"),
         User(username="doctor1", password=hash_password("1234"), role="Doctor"),
