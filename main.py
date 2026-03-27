@@ -7,7 +7,6 @@ from passlib.context import CryptContext
 from jose import jwt
 from cryptography.fernet import Fernet
 from pydantic import BaseModel
-import hashlib
 from datetime import datetime, timedelta
 
 # -------------------------------
@@ -96,25 +95,6 @@ class RecordRequest(BaseModel):
     data: str
 
 # -------------------------------
-# RESET USERS
-# -------------------------------
-@app.on_event("startup")
-def reset_users():
-    db = SessionLocal()
-
-    db.query(User).delete()
-    db.commit()
-
-    users = [
-        User(username="patient1", password=hash_password("1234"), role="Patient"),
-        User(username="doctor1", password=hash_password("1234"), role="Doctor"),
-    ]
-
-    db.add_all(users)
-    db.commit()
-    db.close()
-
-# -------------------------------
 # HOME
 # -------------------------------
 @app.get("/")
@@ -122,7 +102,7 @@ def home():
     return {"message": "MedChain Backend Running 🚀"}
 
 # -------------------------------
-# REGISTER
+# REGISTER (UNLIMITED USERS)
 # -------------------------------
 @app.post("/register")
 def register(req: RegisterRequest, db: Session = Depends(get_db)):
@@ -160,7 +140,7 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
     }
 
 # -------------------------------
-# ADD RECORD (PATIENT ONLY)
+# ADD RECORD (PATIENT)
 # -------------------------------
 @app.post("/add_record")
 def add_record(req: RecordRequest, user=Depends(get_current_user), db: Session = Depends(get_db)):
@@ -200,7 +180,7 @@ def get_records(user=Depends(get_current_user), db: Session = Depends(get_db)):
             MedicalRecord.patient_id == user.id
         ).all()
 
-    else:  # Doctor
+    else:
         allowed = db.query(RecordAccess).filter(
             RecordAccess.doctor_id == user.id,
             RecordAccess.access_granted == "yes"
@@ -212,14 +192,13 @@ def get_records(user=Depends(get_current_user), db: Session = Depends(get_db)):
             MedicalRecord.id.in_(record_ids)
         ).all()
 
-    result = []
-    for r in records:
-        result.append({
+    return [
+        {
             "id": r.id,
             "data": decrypt_data(r.data)
-        })
-
-    return result
+        }
+        for r in records
+    ]
 
 # -------------------------------
 # GRANT ACCESS
@@ -248,3 +227,47 @@ def grant_access(record_id: int, doctor_id: int, user=Depends(get_current_user),
     db.commit()
 
     return {"msg": "Access granted"}
+
+# -------------------------------
+# UPDATE RECORD (PATIENT + DOCTOR)
+# -------------------------------
+@app.put("/update_record/{record_id}")
+def update_record(record_id: int, new_data: str, user=Depends(get_current_user), db: Session = Depends(get_db)):
+
+    record = db.query(MedicalRecord).filter(MedicalRecord.id == record_id).first()
+
+    if not record:
+        raise HTTPException(404, "Record not found")
+
+    # patient can edit own record
+    if user.role == "Patient" and record.patient_id == user.id:
+        record.data = encrypt_data(new_data)
+
+    # doctor can edit if access granted
+    elif user.role == "Doctor":
+        access = db.query(RecordAccess).filter(
+            RecordAccess.record_id == record_id,
+            RecordAccess.doctor_id == user.id,
+            RecordAccess.access_granted == "yes"
+        ).first()
+
+        if not access:
+            raise HTTPException(403, "No permission")
+
+        record.data = encrypt_data(new_data)
+
+    else:
+        raise HTTPException(403, "Not allowed")
+
+    db.commit()
+
+    return {"msg": "Record updated"}
+
+# -------------------------------
+# GET ALL DOCTORS
+# -------------------------------
+@app.get("/doctors")
+def get_doctors(db: Session = Depends(get_db)):
+    doctors = db.query(User).filter(User.role == "Doctor").all()
+
+    return [{"id": d.id, "username": d.username} for d in doctors]
