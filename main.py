@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi.middleware.cors import CORSMiddleware 
 from sqlalchemy.orm import Session
 from database import engine, Base, SessionLocal
 from models import User, MedicalRecord, RecordAccess, AuditLog, EmergencyAccess
@@ -46,6 +47,15 @@ def store_hash_on_chain(record_id: int, data: str):
 # DB
 # -------------------------------
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # allow all frontend (Netlify)
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 Base.metadata.create_all(bind=engine)
 
 def get_db():
@@ -98,7 +108,7 @@ class RecordRequest(BaseModel):
     data: str
 
 # -------------------------------
-# 🔥 FIXED FAKE USERS (IMPORTANT)
+# 🔥 FIXED FAKE USERS
 # -------------------------------
 @app.on_event("startup")
 def reset_users():
@@ -119,7 +129,6 @@ def reset_users():
 # -------------------------------
 # ROUTES
 # -------------------------------
-
 @app.get("/")
 def home():
     return {"message": "MedChain Backend Running 🚀"}
