@@ -1,14 +1,13 @@
 from fastapi import FastAPI, HTTPException, Depends, Header
-from fastapi.middleware.cors import CORSMiddleware 
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from database import engine, Base, SessionLocal
-from models import User, MedicalRecord, RecordAccess, AuditLog, EmergencyAccess
+from models import User, MedicalRecord, RecordAccess, AuditLog
 from passlib.context import CryptContext
 from jose import jwt
 from cryptography.fernet import Fernet
 from pydantic import BaseModel
 import hashlib
-from web3 import Web3
 from datetime import datetime, timedelta
 
 # -------------------------------
@@ -18,7 +17,32 @@ SECRET_KEY = "mysecretkey"
 ALGORITHM = "HS256"
 
 # -------------------------------
-# Encryption
+# APP
+# -------------------------------
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+Base.metadata.create_all(bind=engine)
+
+# -------------------------------
+# DB
+# -------------------------------
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# -------------------------------
+# ENCRYPTION
 # -------------------------------
 key = Fernet.generate_key()
 cipher = Fernet(key)
@@ -28,42 +52,6 @@ def encrypt_data(data: str):
 
 def decrypt_data(data: str):
     return cipher.decrypt(data.encode()).decode()
-
-# -------------------------------
-# Blockchain (Simulated)
-# -------------------------------
-w3 = Web3(Web3.HTTPProvider("http://127.0.0.1:7545"))
-blockchain_storage = {}
-
-def hash_record(data: str):
-    return hashlib.sha256(data.encode()).hexdigest()
-
-def store_hash_on_chain(record_id: int, data: str):
-    record_hash = hash_record(data)
-    blockchain_storage[record_id] = record_hash
-    return record_hash
-
-# -------------------------------
-# DB
-# -------------------------------
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # allow all frontend (Netlify)
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-Base.metadata.create_all(bind=engine)
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 # -------------------------------
 # AUTH
@@ -108,7 +96,7 @@ class RecordRequest(BaseModel):
     data: str
 
 # -------------------------------
-# 🔥 FIXED FAKE USERS
+# RESET USERS
 # -------------------------------
 @app.on_event("startup")
 def reset_users():
@@ -127,7 +115,7 @@ def reset_users():
     db.close()
 
 # -------------------------------
-# ROUTES
+# HOME
 # -------------------------------
 @app.get("/")
 def home():
@@ -172,7 +160,7 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
     }
 
 # -------------------------------
-# ADD RECORD
+# ADD RECORD (PATIENT ONLY)
 # -------------------------------
 @app.post("/add_record")
 def add_record(req: RecordRequest, user=Depends(get_current_user), db: Session = Depends(get_db)):
@@ -191,8 +179,6 @@ def add_record(req: RecordRequest, user=Depends(get_current_user), db: Session =
     db.commit()
     db.refresh(record)
 
-    record_hash = store_hash_on_chain(record.id, req.data)
-
     db.add(AuditLog(
         action="add_record",
         user_id=user.id,
@@ -201,7 +187,7 @@ def add_record(req: RecordRequest, user=Depends(get_current_user), db: Session =
     ))
     db.commit()
 
-    return {"msg": "Record added", "record_id": record.id, "hash": record_hash}
+    return {"msg": "Record added", "record_id": record.id}
 
 # -------------------------------
 # GET RECORDS
@@ -210,22 +196,55 @@ def add_record(req: RecordRequest, user=Depends(get_current_user), db: Session =
 def get_records(user=Depends(get_current_user), db: Session = Depends(get_db)):
 
     if user.role == "Patient":
-        records = db.query(MedicalRecord).filter(MedicalRecord.patient_id == user.id).all()
-    else:
+        records = db.query(MedicalRecord).filter(
+            MedicalRecord.patient_id == user.id
+        ).all()
+
+    else:  # Doctor
         allowed = db.query(RecordAccess).filter(
             RecordAccess.doctor_id == user.id,
             RecordAccess.access_granted == "yes"
         ).all()
 
         record_ids = [a.record_id for a in allowed]
-        records = db.query(MedicalRecord).filter(MedicalRecord.id.in_(record_ids)).all()
+
+        records = db.query(MedicalRecord).filter(
+            MedicalRecord.id.in_(record_ids)
+        ).all()
 
     result = []
     for r in records:
         result.append({
             "id": r.id,
-            "data": decrypt_data(r.data),
-            "hash": blockchain_storage.get(r.id)
+            "data": decrypt_data(r.data)
         })
 
     return result
+
+# -------------------------------
+# GRANT ACCESS
+# -------------------------------
+@app.post("/grant_access")
+def grant_access(record_id: int, doctor_id: int, user=Depends(get_current_user), db: Session = Depends(get_db)):
+
+    if user.role != "Patient":
+        raise HTTPException(403, "Only patient can grant access")
+
+    record = db.query(MedicalRecord).filter(
+        MedicalRecord.id == record_id,
+        MedicalRecord.patient_id == user.id
+    ).first()
+
+    if not record:
+        raise HTTPException(404, "Record not found")
+
+    access = RecordAccess(
+        record_id=record_id,
+        doctor_id=doctor_id,
+        access_granted="yes"
+    )
+
+    db.add(access)
+    db.commit()
+
+    return {"msg": "Access granted"}
