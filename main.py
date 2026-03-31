@@ -41,9 +41,9 @@ def get_db():
         db.close()
 
 # -------------------------------
-# ENCRYPTION
+# ENCRYPTION (FIXED KEY ✅)
 # -------------------------------
-key = Fernet.generate_key()
+key = b'c3VwZXJzZWNyZXRrZXkxMjM0NTY3ODkwMTIzNDU2Nzg5MA=='
 cipher = Fernet(key)
 
 def encrypt_data(data: str):
@@ -72,7 +72,6 @@ def create_token(user):
 
 def get_current_user(token: str = Header(...), db: Session = Depends(get_db)):
     try:
-        token = token.replace("Bearer ", "")
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user = db.query(User).filter(User.id == payload["user_id"]).first()
         return user
@@ -102,7 +101,7 @@ def home():
     return {"message": "MedChain Backend Running 🚀"}
 
 # -------------------------------
-# REGISTER (UNLIMITED USERS)
+# REGISTER
 # -------------------------------
 @app.post("/register")
 def register(req: RegisterRequest, db: Session = Depends(get_db)):
@@ -140,7 +139,7 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
     }
 
 # -------------------------------
-# ADD RECORD (PATIENT)
+# ADD RECORD
 # -------------------------------
 @app.post("/add_record")
 def add_record(req: RecordRequest, user=Depends(get_current_user), db: Session = Depends(get_db)):
@@ -229,7 +228,7 @@ def grant_access(record_id: int, doctor_id: int, user=Depends(get_current_user),
     return {"msg": "Access granted"}
 
 # -------------------------------
-# UPDATE RECORD (PATIENT + DOCTOR)
+# UPDATE RECORD
 # -------------------------------
 @app.put("/update_record/{record_id}")
 def update_record(record_id: int, new_data: str, user=Depends(get_current_user), db: Session = Depends(get_db)):
@@ -239,11 +238,9 @@ def update_record(record_id: int, new_data: str, user=Depends(get_current_user),
     if not record:
         raise HTTPException(404, "Record not found")
 
-    # patient can edit own record
     if user.role == "Patient" and record.patient_id == user.id:
         record.data = encrypt_data(new_data)
 
-    # doctor can edit if access granted
     elif user.role == "Doctor":
         access = db.query(RecordAccess).filter(
             RecordAccess.record_id == record_id,
@@ -264,10 +261,9 @@ def update_record(record_id: int, new_data: str, user=Depends(get_current_user),
     return {"msg": "Record updated"}
 
 # -------------------------------
-# GET ALL DOCTORS
+# GET DOCTORS
 # -------------------------------
 @app.get("/doctors")
 def get_doctors(db: Session = Depends(get_db)):
     doctors = db.query(User).filter(User.role == "Doctor").all()
-
     return [{"id": d.id, "username": d.username} for d in doctors]
