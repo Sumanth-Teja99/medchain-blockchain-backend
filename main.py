@@ -2,22 +2,18 @@ from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from database import engine, Base, SessionLocal
-from models import User, MedicalRecord, RecordAccess, AuditLog
+from models import User, MedicalRecord, RecordAccess
 from passlib.context import CryptContext
 from jose import jwt
-from cryptography.fernet import Fernet
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 
 # -------------------------------
 # CONFIG
 # -------------------------------
-SECRET_KEY = "mysecretkey"
+SECRET_KEY = "secret"
 ALGORITHM = "HS256"
 
-# -------------------------------
-# APP
-# -------------------------------
 app = FastAPI()
 
 app.add_middleware(
@@ -41,18 +37,6 @@ def get_db():
         db.close()
 
 # -------------------------------
-# ENCRYPTION (VALID FIXED KEY ✅)
-# -------------------------------
-key = Fernet.generate_key()  # SAFE: no crash
-cipher = Fernet(key)
-
-def encrypt_data(data: str):
-    return cipher.encrypt(data.encode()).decode()
-
-def decrypt_data(data: str):
-    return cipher.decrypt(data.encode()).decode()
-
-# -------------------------------
 # AUTH
 # -------------------------------
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -72,14 +56,14 @@ def create_token(user):
 
 def get_current_user(token: str = Header(None), db: Session = Depends(get_db)):
     if not token:
-        raise HTTPException(status_code=401, detail="Token missing")
+        raise HTTPException(401, "Token missing")
 
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user = db.query(User).filter(User.id == payload["user_id"]).first()
         return user
     except:
-        raise HTTPException(status_code=401, detail="Invalid Token")
+        raise HTTPException(401, "Invalid token")
 
 # -------------------------------
 # SCHEMAS
@@ -97,13 +81,6 @@ class RecordRequest(BaseModel):
     data: str
 
 # -------------------------------
-# HOME
-# -------------------------------
-@app.get("/")
-def home():
-    return {"message": "MedChain Backend Running 🚀"}
-
-# -------------------------------
 # REGISTER
 # -------------------------------
 @app.post("/register")
@@ -116,12 +93,9 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
         password=hash_password(req.password),
         role=req.role
     )
-
     db.add(user)
     db.commit()
-    db.refresh(user)
-
-    return {"msg": "User created", "user_id": user.id}
+    return {"msg": "User created"}
 
 # -------------------------------
 # LOGIN
@@ -133,45 +107,27 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
     if not user or not verify_password(req.password, user.password):
         raise HTTPException(400, "Invalid credentials")
 
-    token = create_token(user)
-
     return {
-        "access_token": token,
-        "role": user.role,
-        "user_id": user.id
+        "access_token": create_token(user),
+        "role": user.role
     }
 
 # -------------------------------
-# ADD RECORD
+# ADD RECORD (PATIENT)
 # -------------------------------
 @app.post("/add_record")
 def add_record(req: RecordRequest, user=Depends(get_current_user), db: Session = Depends(get_db)):
 
-    print("CURRENT USER ROLE:", user.role)
-
     if user.role != "Patient":
         raise HTTPException(403, "Only patient can add record")
 
-    encrypted = encrypt_data(req.data)
-
     record = MedicalRecord(
         patient_id=user.id,
-        data=encrypted
+        data=req.data
     )
-
     db.add(record)
     db.commit()
-    db.refresh(record)
-
-    db.add(AuditLog(
-        action="add_record",
-        user_id=user.id,
-        record_id=record.id,
-        timestamp=str(datetime.now())
-    ))
-    db.commit()
-
-    return {"msg": "Record added", "record_id": record.id}
+    return {"msg": "Record added"}
 
 # -------------------------------
 # GET RECORDS
@@ -183,26 +139,18 @@ def get_records(user=Depends(get_current_user), db: Session = Depends(get_db)):
         records = db.query(MedicalRecord).filter(
             MedicalRecord.patient_id == user.id
         ).all()
-
     else:
-        allowed = db.query(RecordAccess).filter(
-            RecordAccess.doctor_id == user.id,
-            RecordAccess.access_granted == "yes"
+        access = db.query(RecordAccess).filter(
+            RecordAccess.doctor_id == user.id
         ).all()
 
-        record_ids = [a.record_id for a in allowed]
+        ids = [a.record_id for a in access]
 
         records = db.query(MedicalRecord).filter(
-            MedicalRecord.id.in_(record_ids)
+            MedicalRecord.id.in_(ids)
         ).all()
 
-    return [
-        {
-            "id": r.id,
-            "data": decrypt_data(r.data)
-        }
-        for r in records
-    ]
+    return [{"id": r.id, "data": r.data} for r in records]
 
 # -------------------------------
 # GRANT ACCESS
@@ -211,7 +159,7 @@ def get_records(user=Depends(get_current_user), db: Session = Depends(get_db)):
 def grant_access(record_id: int, doctor_id: int, user=Depends(get_current_user), db: Session = Depends(get_db)):
 
     if user.role != "Patient":
-        raise HTTPException(403, "Only patient can grant access")
+        raise HTTPException(403, "Only patient can grant")
 
     record = db.query(MedicalRecord).filter(
         MedicalRecord.id == record_id,
@@ -219,15 +167,9 @@ def grant_access(record_id: int, doctor_id: int, user=Depends(get_current_user),
     ).first()
 
     if not record:
-        raise HTTPException(404, "Record not found")
+        raise HTTPException(404, "Not found")
 
-    access = RecordAccess(
-        record_id=record_id,
-        doctor_id=doctor_id,
-        access_granted="yes"
-    )
-
-    db.add(access)
+    db.add(RecordAccess(record_id=record_id, doctor_id=doctor_id))
     db.commit()
 
     return {"msg": "Access granted"}
@@ -241,35 +183,31 @@ def update_record(record_id: int, new_data: str, user=Depends(get_current_user),
     record = db.query(MedicalRecord).filter(MedicalRecord.id == record_id).first()
 
     if not record:
-        raise HTTPException(404, "Record not found")
+        raise HTTPException(404, "Not found")
 
     if user.role == "Patient" and record.patient_id == user.id:
-        record.data = encrypt_data(new_data)
+        record.data = new_data
 
     elif user.role == "Doctor":
         access = db.query(RecordAccess).filter(
             RecordAccess.record_id == record_id,
-            RecordAccess.doctor_id == user.id,
-            RecordAccess.access_granted == "yes"
+            RecordAccess.doctor_id == user.id
         ).first()
 
         if not access:
-            raise HTTPException(403, "No permission")
+            raise HTTPException(403, "No access")
 
-        record.data = encrypt_data(new_data)
-
+        record.data = new_data
     else:
         raise HTTPException(403, "Not allowed")
 
     db.commit()
-
-    return {"msg": "Record updated"}
+    return {"msg": "Updated"}
 
 # -------------------------------
 # GET DOCTORS
 # -------------------------------
 @app.get("/doctors")
-def get_doctors(db: Session = Depends(get_db)):
-
-    doctors = db.query(User).filter(User.role == "Doctor").all()
-    return [{"id": d.id, "username": d.username} for d in doctors]
+def doctors(db: Session = Depends(get_db)):
+    users = db.query(User).filter(User.role == "Doctor").all()
+    return [{"id": u.id, "username": u.username} for u in users]
