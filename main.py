@@ -118,15 +118,20 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
 @app.post("/add_record")
 def add_record(req: RecordRequest, user=Depends(get_current_user), db: Session = Depends(get_db)):
 
+    print("🔥 DEBUG USER:", user)
+    print("🔥 DEBUG ROLE:", user.role)
+
     if user.role != "Patient":
-        raise HTTPException(403, "Only patient can add record")
+        raise HTTPException(403, f"Only patient can add record. Your role: {user.role}")
 
     record = MedicalRecord(
         patient_id=user.id,
         data=req.data
     )
+
     db.add(record)
     db.commit()
+
     return {"msg": "Record added"}
 
 # -------------------------------
