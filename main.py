@@ -121,7 +121,7 @@ def add_record(req: RecordRequest, user=Depends(get_current_user), db: Session =
     print("🔥 DEBUG USER:", user)
     print("🔥 DEBUG ROLE:", user.role)
 
-    if user.role != "Patient":
+    if user.role != "patient":
         raise HTTPException(403, f"Only patient can add record. Your role: {user.role}")
 
     record = MedicalRecord(
@@ -140,7 +140,7 @@ def add_record(req: RecordRequest, user=Depends(get_current_user), db: Session =
 @app.get("/get_records")
 def get_records(user=Depends(get_current_user), db: Session = Depends(get_db)):
 
-    if user.role == "Patient":
+    if user.role == "patient":
         records = db.query(MedicalRecord).filter(
             MedicalRecord.patient_id == user.id
         ).all()
@@ -163,7 +163,7 @@ def get_records(user=Depends(get_current_user), db: Session = Depends(get_db)):
 @app.post("/grant_access")
 def grant_access(record_id: int, doctor_id: int, user=Depends(get_current_user), db: Session = Depends(get_db)):
 
-    if user.role != "Patient":
+    if user.role != "patient":
         raise HTTPException(403, "Only patient can grant")
 
     record = db.query(MedicalRecord).filter(
@@ -190,7 +190,7 @@ def update_record(record_id: int, new_data: str, user=Depends(get_current_user),
     if not record:
         raise HTTPException(404, "Not found")
 
-    if user.role == "Patient" and record.patient_id == user.id:
+    if user.role == "patient" and record.patient_id == user.id:
         record.data = new_data
 
     elif user.role == "Doctor":
