@@ -270,5 +270,6 @@ def update_record(record_id: int, new_data: str, user=Depends(get_current_user),
 # -------------------------------
 @app.get("/doctors")
 def get_doctors(db: Session = Depends(get_db)):
+
     doctors = db.query(User).filter(User.role == "Doctor").all()
     return [{"id": d.id, "username": d.username} for d in doctors]
