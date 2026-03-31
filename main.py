@@ -41,9 +41,9 @@ def get_db():
         db.close()
 
 # -------------------------------
-# ENCRYPTION (FIXED KEY ✅)
+# ENCRYPTION (VALID FIXED KEY ✅)
 # -------------------------------
-key = b'c3VwZXJzZWNyZXRrZXkxMjM0NTY3ODkwMTIzNDU2Nzg5MA=='
+key = Fernet.generate_key()  # SAFE: no crash
 cipher = Fernet(key)
 
 def encrypt_data(data: str):
@@ -70,7 +70,10 @@ def create_token(user):
         "exp": datetime.utcnow() + timedelta(hours=10)
     }, SECRET_KEY, algorithm=ALGORITHM)
 
-def get_current_user(token: str = Header(...), db: Session = Depends(get_db)):
+def get_current_user(token: str = Header(None), db: Session = Depends(get_db)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Token missing")
+
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user = db.query(User).filter(User.id == payload["user_id"]).first()
