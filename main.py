@@ -147,6 +147,8 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
 @app.post("/add_record")
 def add_record(req: RecordRequest, user=Depends(get_current_user), db: Session = Depends(get_db)):
 
+    print("CURRENT USER ROLE:", user.role)
+
     if user.role != "Patient":
         raise HTTPException(403, "Only patient can add record")
 
